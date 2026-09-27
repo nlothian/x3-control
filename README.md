@@ -48,7 +48,20 @@ node cli.js help                   # everything else, including raw get/set
 
 ## Web UI and REST API
 
-`npm start` serves the web UI and this API:
+`npm start` serves the web UI: live view, photo/record buttons, a Videos /
+Photos browser with in-browser playback, and Settings with a **Camera** tab
+(menu settings) and a **Wi-Fi** tab. The Wi-Fi tab shows the current mode,
+switches between hotspot and client mode, changes the hotspot name and
+password, and adds, edits or removes the saved networks the camera joins in
+client mode. Passwords are write-only: the page only shows whether one is set.
+When you switch to hotspot mode the server starts using `192.72.1.1` and
+remembers the camera's address on your network for switching back.
+
+The server has **no authentication** and listens on all interfaces, so anyone
+on your network who can reach it can control the camera and change its Wi-Fi
+settings. Only run it on a network you trust.
+
+API:
 
 | Method | Path | Body / query |
 |---|---|---|
@@ -64,7 +77,13 @@ node cli.js help                   # everything else, including raw get/set
 | POST | `/api/clock` | |
 | GET | `/api/files` | `?type=video` (default) or `?type=photo`; `&all`, or `&from=0&count=16` |
 | DELETE | `/api/files?path=/SD/Video/…` | |
-| GET | `/api/wifi` | hotspot and client-mode configuration |
+| GET | `/api/wifi` | `mode` (`hotspot` / `client` / `mixed`), hotspot, saved networks (`hasKey`, never passwords), `cameraHost` |
+| PUT | `/api/wifi/hotspot` | `{"ssid": "...", "password": "..."}`: either may be omitted |
+| PUT | `/api/wifi/networks/:slot` | `{"ssid": "...", "password": "...", "encType": "AES"}` for slot 1–8; omit `password` to keep it. Read back before returning. |
+| DELETE | `/api/wifi/networks/:slot` | empty a saved-network slot |
+| POST | `/api/wifi/hotspot-mode` | switch to the camera's hotspot (it leaves your network) |
+| POST | `/api/wifi/client-mode` | switch to client mode using the saved networks (turns the hotspot off) |
+| PUT | `/api/camera-host` | `{"host": "192.168.1.50"}`: the address the server uses for the camera |
 | GET | `/media?path=/SD/…[&download]` | the original file |
 | GET | `/play?path=/SD/Video/….MOV` | browser-playable MP4 (H.264 + AAC), with Range support for seeking |
 | GET | `/thumb?path=/SD/…` | 320px-wide JPEG thumbnail of a video or photo |

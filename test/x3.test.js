@@ -155,3 +155,39 @@ test('client mode does not switch if the camera stored something else', async ()
   assert.ok(!mock.log.slice(before).some((l) => l.includes('Net.Dev.1.Start') || l.includes('value=reset')));
   assert.equal((await cam.wifi()).hotspot.enabled, true);
 });
+
+test('editing saved networks', async () => {
+  await cam.saveStationProfile({ slot: 3, ssid: 'Cabin', password: 'secret123', encType: 'TKIP' });
+  let w = await cam.wifi();
+  assert.deepEqual(w.station.profiles[2], { slot: 3, ssid: 'Cabin', encType: 'TKIP', hasKey: true });
+  // No password given: the stored one is kept.
+  await cam.saveStationProfile({ slot: 3, ssid: 'Cabin 2G', encType: 'AES' });
+  w = await cam.wifi();
+  assert.equal(w.raw['Net.WIFI_STA.AP.3.SSID'], 'Cabin 2G');
+  assert.equal(w.raw['Net.WIFI_STA.AP.3.CryptoKey'], 'secret123');
+  await assert.rejects(cam.saveStationProfile({ slot: 3, ssid: '' }), (e) => e.code === 'INVALID');
+  await assert.rejects(cam.saveStationProfile({ slot: 3, ssid: 'x', encType: 'WEP' }), (e) => e.code === 'INVALID');
+
+  await cam.clearStationProfile(3);
+  assert.equal((await cam.wifi()).station.profiles[2].ssid, '');
+});
+
+test('client mode from saved networks needs at least one', async () => {
+  const saved = (await cam.wifi()).station.profiles.filter((p) => p.ssid);
+  for (const p of saved) await cam.clearStationProfile(p.slot);
+  await assert.rejects(cam.useSavedNetworks(), (e) => e.code === 'INVALID');
+  await cam.saveStationProfile({ slot: 1, ssid: 'Home', password: 'pw123456' });
+  await cam.useSavedNetworks();
+  const w = await cam.wifi();
+  assert.equal(w.station.enabled, true);
+  assert.equal(w.hotspot.enabled, false);
+  await cam.useHotspot();
+});
+
+test('camera address can change at runtime', () => {
+  const c = new X3Camera({ host: '192.72.1.1' });
+  c.setHost('192.168.1.50:8080');
+  assert.equal(c.host, '192.168.1.50:8080');
+  assert.equal(c.rtspUrl, 'rtsp://192.168.1.50/liveRTSP/av4');
+  assert.throws(() => c.setHost(' '), (e) => e.code === 'INVALID');
+});

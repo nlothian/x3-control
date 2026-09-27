@@ -8,12 +8,15 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { X3Camera } from './lib/x3.js';
+import { X3Camera, DEFAULT_HOST } from './lib/x3.js';
 import { SETTINGS, normaliseValue } from './lib/settings-meta.js';
 import { MediaCache, serveFile, validCameraPath, isPhoto } from './lib/media.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const cam = new X3Camera();
+// The camera's address on your network, remembered when switching to its
+// hotspot so switching back can point at it again.
+let clientHost = cam.host === DEFAULT_HOST ? undefined : cam.host;
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(rootDir, 'public');
 const media = new MediaCache(cam, { dir: process.env.X3_CACHE_DIR || path.join(rootDir, 'cache') });
@@ -58,7 +61,40 @@ const routes = [
       : cam.listFiles({ type, from: Number(url.searchParams.get('from') || 0), count: Number(url.searchParams.get('count') || 16) });
   }],
   ['DELETE', /^\/api\/files$/, async (m, b, url) => ({ ok: await cam.deleteFile(url.searchParams.get('path')) })],
-  ['GET', /^\/api\/wifi$/, async () => { const { raw, ...w } = await cam.wifi(); return w; }],
+  // Wi-Fi: passwords are write-only; responses only say whether one is set.
+  ['GET', /^\/api\/wifi$/, async () => {
+    const { raw, ...w } = await cam.wifi();
+    const mode = w.hotspot.enabled && !w.station.enabled ? 'hotspot' : !w.hotspot.enabled && w.station.enabled ? 'client' : 'mixed';
+    return { ...w, hotspot: { ...w.hotspot, hasKey: Boolean(raw['Net.WIFI_AP.CryptoKey']) }, mode, cameraHost: cam.host, clientHost };
+  }],
+  ['PUT', /^\/api\/camera-host$/, async (m, { host }) => {
+    cam.setHost(host);
+    if (cam.host !== DEFAULT_HOST) clientHost = cam.host;
+    return { cameraHost: cam.host };
+  }],
+  ['PUT', /^\/api\/wifi\/hotspot$/, async (m, { ssid, password }) => {
+    if (password) X3Camera.checkStationPassword(password);
+    await cam.setHotspot({ ssid: ssid || undefined, password: password || undefined });
+    return { ok: true };
+  }],
+  ['PUT', /^\/api\/wifi\/networks\/([1-8])$/, async ([, slot], { ssid, password, encType }) => {
+    await cam.saveStationProfile({ slot: Number(slot), ssid, password: password || undefined, encType });
+    return { ok: true };
+  }],
+  ['DELETE', /^\/api\/wifi\/networks\/([1-8])$/, async ([, slot]) => ({ ok: await cam.clearStationProfile(Number(slot)) ?? true })],
+  // Both switches restart the camera's Wi-Fi, so it drops off its current network.
+  ['POST', /^\/api\/wifi\/hotspot-mode$/, async () => {
+    const { hotspot } = await cam.wifi();
+    if (cam.host !== DEFAULT_HOST) clientHost = cam.host;
+    await cam.useHotspot();
+    cam.setHost(DEFAULT_HOST);
+    return { ok: true, hotspotName: hotspot.ssid, cameraHost: cam.host, clientHost };
+  }],
+  ['POST', /^\/api\/wifi\/client-mode$/, async () => {
+    await cam.useSavedNetworks();
+    if (clientHost) cam.setHost(clientHost);
+    return { ok: true, cameraHost: cam.host, clientHost };
+  }],
   ['GET', /^\/api\/live$/, () => ({ rtsp: cam.rtspUrl, mjpeg: '/live.mjpeg' })],
 ];
 
@@ -144,7 +180,7 @@ const server = http.createServer(async (req, res) => {
   } catch (err) {
     if (res.headersSent) return res.destroy();
     // 701 = the camera rejected the value; anything else is a camera/network failure.
-    const status = err.status ?? (err.code === 701 ? 400 : 502);
+    const status = err.status ?? (err.code === 701 || err.code === 'INVALID' ? 400 : 502);
     res.writeHead(status, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: err.code === 701 ? `Camera rejected that value (${err.message})` : err.message }));
   }

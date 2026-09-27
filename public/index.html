@@ -68,6 +68,18 @@
   #playerMsg:empty { display: none; }
   #playerMsg.err { color: #ff8a80; pointer-events: auto; background: #000; }
   #player .foot { padding: 8px 10px; font-size: 13px; color: var(--muted); }
+  .wifi { display: grid; gap: 18px; }
+  .wifi h3 { font-size: 14px; margin: 0 0 8px; }
+  .wifi p { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+  .wifi input, .wifi select { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); min-width: 0; }
+  .wifi .form { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  .wifi .form input { flex: 1 1 140px; }
+  .net { border: 1px solid var(--line); border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+  .net .tag { font-size: 12px; color: var(--muted); }
+  .mode { font-size: 15px; }
+  .mode b { font-weight: 600; }
+  button.warn { border-color: var(--rec); color: var(--rec); }
 </style>
 </head>
 <body>
@@ -108,12 +120,18 @@
   </dialog>
 
   <section>
-    <div class="row" style="justify-content: space-between">
-      <h2>Settings</h2>
+    <div class="row" style="justify-content: space-between; margin-bottom: 10px">
+      <div class="tabs" role="tablist" aria-label="Settings">
+        <button role="tab" id="stab-camera" onclick="showSettingsTab('camera')">Camera</button>
+        <button role="tab" id="stab-wifi" onclick="showSettingsTab('wifi')">Wi-Fi</button>
+      </div>
       <span id="settingsHint" style="color: var(--muted); font-size: 13px"></span>
     </div>
-    <div id="settings" class="settings"></div>
-    <div id="settingsInfo" class="info"></div>
+    <div id="spane-camera">
+      <div id="settings" class="settings"></div>
+      <div id="settingsInfo" class="info"></div>
+    </div>
+    <div id="spane-wifi" class="wifi" hidden>Loading…</div>
   </section>
 </main>
 <script>
@@ -440,6 +458,169 @@ async function saveSetting(el) {
 
 api('/api/live').then((l) => ($('rtsp').textContent = l.rtsp)).catch(() => {});
 showTab(tab);
+// --- Wi-Fi tab -------------------------------------------------------------
+let settingsTab = 'camera';
+try { settingsTab = localStorage.getItem('x3-settings-tab') || 'camera'; } catch {}
+
+function showSettingsTab(t) {
+  settingsTab = t;
+  try { localStorage.setItem('x3-settings-tab', t); } catch {}
+  for (const k of ['camera', 'wifi']) {
+    $('stab-' + k).setAttribute('aria-selected', String(k === t));
+    $('spane-' + k).hidden = k !== t;
+  }
+  // Only fetched when shown, to keep load on the single-threaded camera down.
+  if (t === 'wifi') loadWifi();
+}
+
+// Factory example entries shipped in the firmware's saved-network slots.
+const EXAMPLE_NETWORKS = ['YourAP1', 'YourAP2', 'YourAP3', 'Coke', 'ZyXAIT99'];
+let wifiState = null;
+
+function note(id, text, cls = '') {
+  const el = $(id);
+  if (el) { el.className = 'note ' + cls; el.textContent = text; }
+}
+
+async function loadWifi() {
+  const pane = $('spane-wifi');
+  try {
+    const w = wifiState = await api('/api/wifi');
+    const saved = w.station.profiles.filter((p) => p.ssid);
+    const free = w.station.profiles.find((p) => !p.ssid);
+    const modeText = w.mode === 'hotspot' ? `<b>Hotspot</b>: the camera runs its own network "${esc(w.hotspot.ssid)}"`
+      : w.mode === 'client' ? '<b>Client</b>: the camera is on your Wi-Fi network'
+      : '<b>Mixed</b>: hotspot and client mode are both on; the camera stays on its hotspot';
+    const netRow = (p) => `<div class="net">
+        <div class="form">
+          <input id="ssid-${p.slot}" value="${esc(p.ssid)}" placeholder="Network name" aria-label="Network name, slot ${p.slot}">
+          <select id="enc-${p.slot}" aria-label="Security">
+            <option value="AES"${p.encType !== 'TKIP' ? ' selected' : ''}>WPA2 (AES)</option>
+            <option value="TKIP"${p.encType === 'TKIP' ? ' selected' : ''}>WPA (TKIP)</option>
+          </select>
+          <input id="key-${p.slot}" type="password" autocomplete="new-password"
+            placeholder="${p.hasKey ? 'Password: saved' : 'Password'}" title="Leave blank to keep the saved password" aria-label="Password">
+          <button onclick="saveNetwork(${p.slot})">Save</button>
+          <button class="warn" onclick="removeNetwork(${p.slot})">Remove</button>
+        </div>
+        <span class="tag">Slot ${p.slot}${EXAMPLE_NETWORKS.includes(p.ssid) ? ' · factory example entry, safe to remove' : ''}</span>
+        <p class="note" id="note-net-${p.slot}"></p>
+      </div>`;
+    pane.innerHTML = `
+      <div>
+        <h3>Mode</h3>
+        <p class="mode">${modeText}</p>
+        <div class="form">
+          ${w.mode !== 'hotspot' ? '<button class="warn" onclick="switchMode(\'hotspot\')">Switch to hotspot mode</button>' : ''}
+          ${w.mode !== 'client' ? `<button class="warn" onclick="switchMode('client')"${saved.length ? '' : ' disabled title="Add a network first"'}>Switch to client mode</button>` : ''}
+        </div>
+        <p class="note" id="note-mode"></p>
+      </div>
+      <div>
+        <h3>Camera address</h3>
+        <p>The address this server uses to reach the camera: ${esc(w.cameraHost)}.
+          On its own hotspot it's 192.72.1.1; on your network, whatever your router gives it.</p>
+        <div class="form">
+          <input id="camHost" value="${esc(w.cameraHost)}" aria-label="Camera address">
+          <button onclick="saveHost()">Use this address</button>
+        </div>
+        <p class="note" id="note-host"></p>
+      </div>
+      <div>
+        <h3>Hotspot</h3>
+        <p>The camera's own network. Changes apply the next time its Wi-Fi restarts (switching mode or power-cycling).</p>
+        <div class="form">
+          <input id="apSsid" value="${esc(w.hotspot.ssid)}" placeholder="Hotspot name" aria-label="Hotspot name">
+          <input id="apKey" type="password" autocomplete="new-password" aria-label="Hotspot password"
+            placeholder="${w.hotspot.hasKey ? 'Password: set' : 'Password (8–35 chars)'}" title="Leave blank to keep the current password">
+          <button onclick="saveHotspot()">Save</button>
+        </div>
+        <p class="note" id="note-ap"></p>
+      </div>
+      <div>
+        <h3>Saved networks</h3>
+        <p>Networks the camera tries in client mode. 2.4 GHz only; passwords up to 35 characters, no "&amp;".</p>
+        ${saved.map(netRow).join('') || '<p class="empty">No saved networks.</p>'}
+        ${free ? `<div class="net">
+          <div class="form">
+            <input id="ssid-${free.slot}" placeholder="Network name" aria-label="New network name">
+            <select id="enc-${free.slot}" aria-label="Security"><option value="AES">WPA2 (AES)</option><option value="TKIP">WPA (TKIP)</option></select>
+            <input id="key-${free.slot}" type="password" autocomplete="new-password" placeholder="Password" aria-label="Password">
+            <button class="primary" onclick="saveNetwork(${free.slot}, true)">Add network</button>
+          </div>
+          <p class="note" id="note-net-${free.slot}"></p>
+        </div>` : '<p class="empty">All 8 slots are in use; remove one to add another.</p>'}
+      </div>`;
+  } catch (e) {
+    pane.innerHTML = `<p class="note err">Couldn't read the camera's Wi-Fi settings: ${esc(e.message)}</p>`;
+  }
+}
+
+async function saveNetwork(slot, isNew) {
+  const ssid = $('ssid-' + slot).value.trim();
+  const password = $('key-' + slot).value;
+  if (!ssid) return note('note-net-' + slot, 'Enter a network name', 'err');
+  if (isNew && !password && !confirm(`Save "${ssid}" with no password (an open network)?`)) return;
+  note('note-net-' + slot, 'Saving…');
+  try {
+    await api('/api/wifi/networks/' + slot, { method: 'PUT', body: JSON.stringify({ ssid, password: password || undefined, encType: $('enc-' + slot).value }) });
+    await loadWifi();
+    note('note-net-' + slot, 'Saved', 'ok');
+  } catch (e) { note('note-net-' + slot, e.message, 'err'); }
+}
+
+async function removeNetwork(slot) {
+  const name = $('ssid-' + slot).value;
+  const live = wifiState?.mode === 'client' && wifiState.station.profiles.filter((p) => p.ssid).length === 1;
+  if (!confirm(live ? `"${name}" is the only saved network and the camera is in client mode. If you remove it and the camera restarts, you won't be able to reach it. Remove anyway?`
+    : `Remove "${name}" from the camera?`)) return;
+  note('note-net-' + slot, 'Removing…');
+  try { await api('/api/wifi/networks/' + slot, { method: 'DELETE' }); await loadWifi(); }
+  catch (e) { note('note-net-' + slot, e.message, 'err'); }
+}
+
+async function saveHotspot() {
+  const ssid = $('apSsid').value.trim();
+  const password = $('apKey').value;
+  if (password && password.length < 8) return note('note-ap', 'The password must be at least 8 characters', 'err');
+  note('note-ap', 'Saving…');
+  try {
+    await api('/api/wifi/hotspot', { method: 'PUT', body: JSON.stringify({ ssid, password: password || undefined }) });
+    await loadWifi();
+    note('note-ap', password ? 'Saved. Note the new password: you need it to join the hotspot.' : 'Saved', 'ok');
+  } catch (e) { note('note-ap', e.message, 'err'); }
+}
+
+async function saveHost() {
+  note('note-host', 'Saving…');
+  try {
+    await api('/api/camera-host', { method: 'PUT', body: JSON.stringify({ host: $('camHost').value }) });
+    note('note-host', 'Saved', 'ok');
+    refreshStatus(); refreshInfo(); loadFiles(); loadSettings(); loadWifi();
+  } catch (e) { note('note-host', e.message, 'err'); }
+}
+
+async function switchMode(mode) {
+  if (recording) return note('note-mode', 'Stop recording first', 'err');
+  const w = wifiState;
+  const names = w.station.profiles.filter((p) => p.ssid).map((p) => `"${p.ssid}"`).join(', ');
+  const ok = mode === 'hotspot'
+    ? confirm(`Switch the camera to its own hotspot "${w.hotspot.ssid}"?\n\nIt will leave your network. To keep using this page, join the "${w.hotspot.ssid}" Wi-Fi network on this computer; the page will then reach the camera at 192.72.1.1.`)
+    : confirm(`Switch the camera to client mode?\n\nIt turns its hotspot OFF and tries to join: ${names}.\n\nIf it can't join any of them, you won't be able to reach it until one of those networks is available (see the README). The network must be 2.4 GHz.`);
+  if (!ok) return;
+  note('note-mode', 'Switching…');
+  try {
+    const r = await api('/api/wifi/' + mode + '-mode', { method: 'POST', body: '{}' });
+    $('spane-wifi').innerHTML = mode === 'hotspot'
+      ? `<p class="mode">The camera is switching to its hotspot. In about 20 seconds, join the <b>${esc(r.hotspotName)}</b> Wi-Fi network on this computer. This page now talks to the camera at <b>${esc(r.cameraHost)}</b> and will reconnect by itself.</p>`
+      : `<p class="mode">The camera is joining your network. Rejoin your normal Wi-Fi on this computer. ${r.clientHost
+          ? `This page will look for the camera at <b>${esc(r.clientHost)}</b>; if your router gives it a different address, set it under Camera address.`
+          : 'Find its address in your router (a MAC starting 00:e0:4c), then set it under Camera address.'} It can take a couple of minutes.</p>
+        <p><button onclick="loadWifi()">Reload Wi-Fi settings</button></p>`;
+  } catch (e) { note('note-mode', e.message, 'err'); }
+}
+
+showSettingsTab(settingsTab);
 refreshInfo().then(refreshStatus).then(loadFiles).then(loadSettings);
 setInterval(refreshStatus, 5000);
 setInterval(refreshInfo, 30000);
