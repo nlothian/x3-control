@@ -11,12 +11,36 @@ import { fileURLToPath } from 'node:url';
 import { X3Camera, DEFAULT_HOST } from './lib/x3.js';
 import { SETTINGS, normaliseValue } from './lib/settings-meta.js';
 import { MediaCache, serveFile, validCameraPath, isPhoto } from './lib/media.js';
+import { discover, findCamera } from './lib/discover.js';
 
 const PORT = Number(process.env.PORT || 3000);
-const cam = new X3Camera();
-// The camera's address on your network, remembered when switching to its
-// hotspot so switching back can point at it again.
+// X3_HOST unset or "auto": find the camera, and look again whenever it stops
+// answering. It gets a new MAC and IP each time it joins a network.
+let autoHost = !process.env.X3_HOST || process.env.X3_HOST === 'auto';
+const cam = new X3Camera({ host: autoHost ? DEFAULT_HOST : process.env.X3_HOST });
+// The camera's last address on your network (for manual mode and messages).
 let clientHost = cam.host === DEFAULT_HOST ? undefined : cam.host;
+
+function useHost(host) {
+  cam.setHost(host);
+  if (cam.host !== DEFAULT_HOST) clientHost = cam.host;
+}
+
+// One search at a time, and at most every 15s, however many requests fail.
+let searching = null;
+let lastSearch = 0;
+function rediscover({ force = false } = {}) {
+  if (searching) return searching;
+  if (!force && Date.now() - lastSearch < 15000) return Promise.resolve();
+  lastSearch = Date.now();
+  searching = findCamera().then((found) => {
+    if (found && found.host !== cam.host) {
+      console.log(`Camera found at ${found.host}`);
+      useHost(found.host);
+    }
+  }).finally(() => { searching = null; });
+  return searching;
+}
 const rootDir = path.dirname(fileURLToPath(import.meta.url));
 const publicDir = path.join(rootDir, 'public');
 const media = new MediaCache(cam, { dir: process.env.X3_CACHE_DIR || path.join(rootDir, 'cache') });
@@ -65,12 +89,20 @@ const routes = [
   ['GET', /^\/api\/wifi$/, async () => {
     const { raw, ...w } = await cam.wifi();
     const mode = w.hotspot.enabled && !w.station.enabled ? 'hotspot' : !w.hotspot.enabled && w.station.enabled ? 'client' : 'mixed';
-    return { ...w, hotspot: { ...w.hotspot, hasKey: Boolean(raw['Net.WIFI_AP.CryptoKey']) }, mode, cameraHost: cam.host, clientHost };
+    return { ...w, hotspot: { ...w.hotspot, hasKey: Boolean(raw['Net.WIFI_AP.CryptoKey']) }, mode, cameraHost: cam.host, clientHost, autoHost };
   }],
+  // "auto" goes back to finding the camera automatically.
   ['PUT', /^\/api\/camera-host$/, async (m, { host }) => {
-    cam.setHost(host);
-    if (cam.host !== DEFAULT_HOST) clientHost = cam.host;
-    return { cameraHost: cam.host };
+    autoHost = String(host).trim() === 'auto';
+    if (autoHost) await rediscover({ force: true });
+    else useHost(host);
+    return { cameraHost: cam.host, autoHost };
+  }],
+  // Full search of the hotspot address and local network; switches to the first camera found.
+  ['POST', /^\/api\/discover$/, async () => {
+    const found = await discover({ full: true });
+    if (found.length) useHost(found[0].host);
+    return { found, cameraHost: cam.host, autoHost };
   }],
   ['PUT', /^\/api\/wifi\/hotspot$/, async (m, { ssid, password }) => {
     if (password) X3Camera.checkStationPassword(password);
@@ -85,15 +117,17 @@ const routes = [
   // Both switches restart the camera's Wi-Fi, so it drops off its current network.
   ['POST', /^\/api\/wifi\/hotspot-mode$/, async () => {
     const { hotspot } = await cam.wifi();
-    if (cam.host !== DEFAULT_HOST) clientHost = cam.host;
+    useHost(cam.host);
     await cam.useHotspot();
     cam.setHost(DEFAULT_HOST);
-    return { ok: true, hotspotName: hotspot.ssid, cameraHost: cam.host, clientHost };
+    return { ok: true, hotspotName: hotspot.ssid, cameraHost: cam.host, clientHost, autoHost };
   }],
   ['POST', /^\/api\/wifi\/client-mode$/, async () => {
     await cam.useSavedNetworks();
-    if (clientHost) cam.setHost(clientHost);
-    return { ok: true, cameraHost: cam.host, clientHost };
+    // It gets a new address when it joins; in auto mode the next failed
+    // request starts a search, otherwise try its last known address.
+    if (!autoHost && clientHost) cam.setHost(clientHost);
+    return { ok: true, cameraHost: cam.host, clientHost, autoHost };
   }],
   ['GET', /^\/api\/live$/, () => ({ rtsp: cam.rtspUrl, mjpeg: '/live.mjpeg' })],
 ];
@@ -179,6 +213,7 @@ const server = http.createServer(async (req, res) => {
     res.end(JSON.stringify({ error: 'Not found' }));
   } catch (err) {
     if (res.headersSent) return res.destroy();
+    if (autoHost && /Cannot reach|Timed out/.test(err.message)) rediscover();
     // 701 = the camera rejected the value; anything else is a camera/network failure.
     const status = err.status ?? (err.code === 701 || err.code === 'INVALID' ? 400 : 502);
     res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -186,6 +221,8 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`X3 control on http://localhost:${PORT}  (camera: ${cam.host})`);
+server.listen(PORT, async () => {
+  console.log(`X3 control on http://localhost:${PORT}`);
+  if (autoHost) await rediscover({ force: true });
+  console.log(`Camera: ${cam.host}${autoHost ? ' (found automatically; set X3_HOST to fix an address)' : ''}`);
 });

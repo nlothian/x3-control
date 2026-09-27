@@ -3,9 +3,15 @@
 
 import { X3Camera, CameraError, DEFAULT_HOST } from './lib/x3.js';
 import { SETTINGS, normaliseValue } from './lib/settings-meta.js';
+import { discover, findCamera } from './lib/discover.js';
 
 const HELP = `
-Usage: x3 [--host 192.72.1.1] <command> [args]
+Usage: x3 [--host IP|auto] <command> [args]
+
+The camera is found automatically unless --host (or X3_HOST) gives an address.
+It gets a new IP each time it joins your network, so "auto" is the default.
+
+  discover                    List cameras on the hotspot / local network
 
 Status & settings
   status                      Mode and recording state
@@ -92,7 +98,17 @@ async function main() {
   const [cmd, sub, ...rest] = positional;
   // "--password" with no value: prompt for it instead.
   if (flags.password === true) flags.password = await askHidden('Wi-Fi password (hidden): ');
-  const cam = new X3Camera({ host: flags.host });
+  const hostArg = flags.host || process.env.X3_HOST || 'auto';
+  // help and discover don't need a camera address.
+  const needsCamera = cmd && !['help', 'discover'].includes(cmd);
+  let host = hostArg;
+  if (needsCamera && hostArg === 'auto') {
+    const found = await findCamera();
+    if (!found) throw new CameraError('No camera found. Is it on with Wi-Fi enabled? Join its KB-X3 hotspot, or put it on your network.');
+    host = found.host;
+    if (!['live'].includes(cmd)) console.error(`(camera found at ${host})`);
+  }
+  const cam = new X3Camera({ host: host === 'auto' ? undefined : host });
 
   switch (cmd) {
     case undefined:
@@ -100,6 +116,12 @@ async function main() {
       console.log(HELP);
       break;
 
+    case 'discover': {
+      const found = await discover({ full: true });
+      if (!found.length) console.log('No cameras found.');
+      for (const f of found) console.log(`${f.host.padEnd(16)} firmware ${f.firmware}`);
+      break;
+    }
     case 'status': {
       const s = await cam.status();
       console.log(`Mode: ${s.mode}\nRecord: ${s.record}`);

@@ -152,7 +152,8 @@ async function refreshInfo({ reload = true } = {}) {
   try {
     const i = await api('/api/info');
     const mins = Math.floor((i.recordRemainingSec ?? 0) / 60);
-    infoText = ` · 🔋 <b>${i.battery ?? '?'}%</b> · <b>${mins} min</b> / <b>${i.photosRemaining ?? '?'}</b> photos left`;
+    const battery = i.charging ? 'Charging' : `${i.battery ?? '?'}%`;
+    infoText = ` · 🔋 <b>${battery}</b> · <b>${mins} min</b> / <b>${i.photosRemaining ?? '?'}</b> photos left`;
     const sig = `${i.fileCount}/${i.photosRemaining}`;
     if (reload && infoSig !== null && sig !== infoSig && !recording && !busy) loadFiles();
     infoSig = sig;
@@ -183,7 +184,26 @@ async function refreshStatus() {
     // Settings can't be changed mid-recording.
     document.querySelectorAll('#settings select, #settings input').forEach((el) => (el.disabled = recording));
     $('settingsHint').textContent = recording ? 'Stop recording to change settings' : '';
-  } catch (e) { $('status').textContent = 'Camera not reachable'; }
+  } catch (e) {
+    $('status').innerHTML = 'Camera not reachable · <a href="#" onclick="findCamera(); return false">Find camera</a>';
+  }
+}
+
+// Searches the hotspot address and the local network, then reloads everything.
+async function findCamera() {
+  $('status').textContent = 'Searching for the camera…';
+  try {
+    const r = await api('/api/discover', { method: 'POST', body: '{}' });
+    if (!r.found.length) {
+      $('status').innerHTML = 'No camera found (is its Wi-Fi on?) · <a href="#" onclick="findCamera(); return false">Try again</a>';
+      return r;
+    }
+    await refreshInfo({ reload: false });
+    await refreshStatus();
+    loadFiles(); loadSettings();
+    if (settingsTab === 'wifi') loadWifi();
+    return r;
+  } catch (e) { $('status').textContent = 'Search failed: ' + e.message; }
 }
 
 async function toggleRecord() {
@@ -518,11 +538,13 @@ async function loadWifi() {
       </div>
       <div>
         <h3>Camera address</h3>
-        <p>The address this server uses to reach the camera: ${esc(w.cameraHost)}.
-          On its own hotspot it's 192.72.1.1; on your network, whatever your router gives it.</p>
+        <p>The server is using <b>${esc(w.cameraHost)}</b>${w.autoHost ? ', found automatically' : ''}.
+          On its own hotspot the camera is at 192.72.1.1. On your network it gets a new address each time it
+          joins, so leave this on <b>auto</b> to have the server find it.</p>
         <div class="form">
-          <input id="camHost" value="${esc(w.cameraHost)}" aria-label="Camera address">
+          <input id="camHost" value="${w.autoHost ? 'auto' : esc(w.cameraHost)}" aria-label="Camera address, or auto">
           <button onclick="saveHost()">Use this address</button>
+          <button onclick="findFromWifi()">Find camera</button>
         </div>
         <p class="note" id="note-host"></p>
       </div>
@@ -591,6 +613,12 @@ async function saveHotspot() {
   } catch (e) { note('note-ap', e.message, 'err'); }
 }
 
+async function findFromWifi() {
+  note('note-host', 'Searching…');
+  const r = await findCamera();
+  if (r) note('note-host', r.found.length ? `Found ${r.found.map((f) => f.host).join(', ')}` : 'No camera found', r.found.length ? 'ok' : 'err');
+}
+
 async function saveHost() {
   note('note-host', 'Saving…');
   try {
@@ -613,9 +641,10 @@ async function switchMode(mode) {
     const r = await api('/api/wifi/' + mode + '-mode', { method: 'POST', body: '{}' });
     $('spane-wifi').innerHTML = mode === 'hotspot'
       ? `<p class="mode">The camera is switching to its hotspot. In about 20 seconds, join the <b>${esc(r.hotspotName)}</b> Wi-Fi network on this computer. This page now talks to the camera at <b>${esc(r.cameraHost)}</b> and will reconnect by itself.</p>`
-      : `<p class="mode">The camera is joining your network. Rejoin your normal Wi-Fi on this computer. ${r.clientHost
-          ? `This page will look for the camera at <b>${esc(r.clientHost)}</b>; if your router gives it a different address, set it under Camera address.`
-          : 'Find its address in your router (a MAC starting 00:e0:4c), then set it under Camera address.'} It can take a couple of minutes.</p>
+      : `<p class="mode">The camera is joining your network. Rejoin your normal Wi-Fi on this computer. ${r.autoHost
+          ? 'The server will find it by itself once it has joined (it gets a new address each time).'
+          : r.clientHost ? `This page will look for it at <b>${esc(r.clientHost)}</b>, but it usually gets a new address, so use Find camera if it doesn't appear.`
+          : 'Use Find camera once it has joined.'} It can take a couple of minutes.</p>
         <p><button onclick="loadWifi()">Reload Wi-Fi settings</button></p>`;
   } catch (e) { note('note-mode', e.message, 'err'); }
 }

@@ -57,7 +57,7 @@ test('discoverOptions reports accepted values and restores the original', async 
 });
 
 test('info', async () => {
-  assert.deepEqual(await cam.info(), { battery: 75, photosRemaining: 2876, recordRemainingSec: 3842, fileCount: 7, firmwareUpdate: 'idle' });
+  assert.deepEqual(await cam.info(), { battery: 75, charging: false, photosRemaining: 2876, recordRemainingSec: 3842, fileCount: 7, firmwareUpdate: 'idle' });
 });
 
 test('clock uses $-separated value', async () => {

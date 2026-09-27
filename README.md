@@ -23,8 +23,10 @@ node cli.js status
 npm start             # web UI on http://localhost:3000
 ```
 
-If the camera is somewhere else (for example on your home network, see below),
-pass `--host <ip>` to the CLI or set `X3_HOST=<ip>` for both.
+The camera is **found automatically**, both on its hotspot and on your home
+network (see below). To use a fixed address instead, pass `--host <ip>` to the
+CLI or set `X3_HOST=<ip>` for both. `node cli.js discover` lists every camera
+it can find.
 
 ## Command line
 
@@ -83,7 +85,8 @@ API:
 | DELETE | `/api/wifi/networks/:slot` | empty a saved-network slot |
 | POST | `/api/wifi/hotspot-mode` | switch to the camera's hotspot (it leaves your network) |
 | POST | `/api/wifi/client-mode` | switch to client mode using the saved networks (turns the hotspot off) |
-| PUT | `/api/camera-host` | `{"host": "192.168.1.50"}`: the address the server uses for the camera |
+| PUT | `/api/camera-host` | `{"host": "192.168.1.50"}` for a fixed address, or `{"host": "auto"}` to find it automatically |
+| POST | `/api/discover` | search the hotspot address and local network; uses the first camera found |
 | GET | `/media?path=/SD/…[&download]` | the original file |
 | GET | `/play?path=/SD/Video/….MOV` | browser-playable MP4 (H.264 + AAC), with Range support for seeking |
 | GET | `/thumb?path=/SD/…` | 320px-wide JPEG thumbnail of a video or photo |
@@ -122,10 +125,16 @@ network name and password back from the camera and confirming they match. The
 camera's Wi-Fi then restarts. Give it about two minutes (power-cycle it if needed), then
 find it in your router's list of connected devices.
 
-- **Look for a MAC address starting `00:e0:4c`** (the Realtek Wi-Fi module).
-  The `00:0E:53:…` address and the IP that `Net.*` reports are stored defaults,
-  not what the camera actually uses.
-- Give it a DHCP reservation in your router so its address doesn't change.
+- **It gets a new MAC address and IP every time it joins.** Its Wi-Fi module
+  uses `00:e0:4c:00:00:xx`, and only the last byte changes. The router gives
+  it a fresh address each time, so a DHCP reservation doesn't help, and the
+  `00:0E:53:…` address and IP that `Net.*` report aren't used at all.
+- **You don't need to know the address:** the CLI and server find it
+  automatically. They check the hotspot address and any `00:e0:4c:00:00:*`
+  entries in your computer's ARP cache, then ask every address on your local
+  network(s) for the camera's firmware version. It doesn't answer SSDP/UPnP
+  discovery. The server searches again whenever the camera stops answering,
+  and the web UI has a **Find camera** button.
 - To switch back to the camera's own hotspot, run
   `node cli.js --host <ip> wifi hotspot-mode --yes`, then join `KB-X3` again.
   Your network stays saved, so `client-mode` switches back.
@@ -149,9 +158,12 @@ in is to give it that network:
   name and hotspot password, and turn on *Maximise Compatibility* for 2.4 GHz.
 - Once you can reach it, turn the hotspot back on with
   `node cli.js --host <ip> wifi hotspot-mode --yes`.
-- To check whether it's trying at all on a Mac, open Wireless Diagnostics
-  (Option-click the Wi-Fi icon), choose Window → Sniffer on your 2.4 GHz
-  channel, then look for probe requests from a `00:e0:4c:…` address.
+- Check your router's DHCP client list for a recent `00:e0:4c:00:00:…`
+  entry: that's the camera joining, even if it didn't stay.
+- To check whether it's trying at all on a Mac, capture on your 2.4 GHz channel
+  with `sudo /usr/libexec/airportd en0 sniff 2g<channel>/20` (Ctrl-C to stop;
+  the capture goes to `/tmp`), or with Wireless Diagnostics → Window → Sniffer.
+  Then look for probe requests from a `00:e0:4c:…` address.
 
 If client mode doesn't suit you, use a Raspberry Pi (or any machine with two
 network interfaces) as a bridge instead. One interface joins `KB-X3`, the other
@@ -169,7 +181,7 @@ firmware's "CarDV" web server. Everything is plain HTTP GET requests.
 | Record (toggle) | `action=set&property=Video&value=record` |
 | Photo | `action=set&property=Video&value=capture`. Only saves a photo while the live stream is running; the web UI starts it in the background. |
 | Mode / record state | `action=get&property=Camera.Preview.MJPEG.status.*` |
-| Battery, space left | `action=get&property=Camera.*` (`Camera.Battery.Level` is 0/25/50/75/100 and dips under load) |
+| Battery, space left | `action=get&property=Camera.*`. `Camera.Battery.Level` is 0/25/50/75/100 and dips under load; it reads 200 while charging. |
 | List files | `action=dir&property=DCIM&format=all&count=16&from=0` (XML) for videos; `property=Photo` for photos (case-sensitive; anything else lists videos) |
 | Download | `GET /SD/Video/<file>.MOV`, `GET /SD/Photo/<file>.JPG` (Range supported). The camera's `/thumb/…` returns 503 outside playback mode. |
 | Delete | `action=del&property=$SD$Video$<file>.MOV` (`/` → `$`) |
