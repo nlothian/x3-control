@@ -1,0 +1,448 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X3 Control</title>
+<style>
+  :root { --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #5d6673; --line: #dde1e6; --accent: #0a66d8; --rec: #d93025; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111418; --card: #1a1f25; --text: #e8eaed; --muted: #9aa3ad; --line: #2c333b; --accent: #5ea0ff; --rec: #ff6b5e; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.45 system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 960px; margin: 0 auto; padding: 16px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  h1 { font-size: 20px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button { font: inherit; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); background: var(--card); color: var(--text); cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.rec { background: var(--rec); border-color: var(--rec); color: #fff; }
+  #liveBox { width: 100%; aspect-ratio: 4 / 3; max-height: 60vh; background: #000; border-radius: 8px; overflow: hidden;
+    display: grid; place-items: center; color: #9aa3ad; }
+  #live { width: 100%; height: 100%; object-fit: contain; }
+  #live:not([src]) { display: none; }
+  #live[src] + span { display: none; }
+  #status { color: var(--muted); }
+  #status b { color: var(--text); }
+  #msg { min-height: 1.4em; color: var(--muted); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td, th { text-align: left; padding: 6px 4px; border-top: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; }
+  a { color: var(--accent); }
+  code { font-size: 13px; }
+  .settings { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(260px, 100%), 1fr)); gap: 10px 20px; }
+  .setting { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; }
+  .setting label { color: var(--muted); }
+  .setting select, .setting input { font: inherit; padding: 5px 8px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--card); color: var(--text); min-width: 0; width: 150px; }
+  .setting .note { grid-column: 1 / -1; font-size: 12px; min-height: 0; margin-top: -4px; }
+  .note.ok { color: #1e8e3e; } .note.err { color: var(--rec); }
+  .info { margin-top: 14px; color: var(--muted); font-size: 13px; }
+  .info b { color: var(--text); font-weight: 500; }
+  .tabs { display: flex; gap: 4px; }
+  .tabs button { border-radius: 8px; padding: 6px 12px; }
+  .tabs button[aria-selected="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(200px, 100%), 1fr)); gap: 12px; }
+  .card { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; font-size: 13px; min-width: 0; }
+  .thumb { display: block; position: relative; width: 100%; aspect-ratio: 16 / 9; background: var(--line);
+    padding: 0; border: 0; border-radius: 0; cursor: pointer; }
+  .thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+  .thumb .play { position: absolute; inset: 0; margin: auto; width: 44px; height: 44px; border-radius: 50%;
+    background: rgba(0, 0, 0, .55); color: #fff; display: grid; place-items: center; font-size: 17px; padding-left: 3px; }
+  .thumb:hover .play, .thumb:focus-visible .play { background: var(--accent); }
+  .card .meta { padding: 6px 8px; color: var(--muted); overflow-wrap: anywhere; }
+  .card .meta b { color: var(--text); font-weight: 500; }
+  .empty { color: var(--muted); margin: 8px 0; }
+  #player { width: 960px; max-width: calc(100vw - 16px); padding: 0; border: 1px solid var(--line); border-radius: 10px;
+    background: var(--card); color: var(--text); }
+  #player::backdrop { background: rgba(0, 0, 0, .6); }
+  #player .head { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 8px 10px; font-size: 14px; }
+  #player .head b { font-weight: 500; overflow-wrap: anywhere; }
+  #player .head button { padding: 4px 10px; }
+  #player .stage { position: relative; background: #000; }
+  #video { display: block; width: 100%; aspect-ratio: 16 / 9; max-height: 70vh; }
+  #playerMsg { position: absolute; inset: 0; margin: 0; padding: 16px; display: grid; place-items: center; text-align: center;
+    color: #e8eaed; pointer-events: none; }
+  #playerMsg:empty { display: none; }
+  #playerMsg.err { color: #ff8a80; pointer-events: auto; background: #000; }
+  #player .foot { padding: 8px 10px; font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <div class="row" style="justify-content: space-between">
+    <h1>Kaiser Baas X3</h1>
+    <span id="status">Connecting…</span>
+  </div>
+
+  <section>
+    <div id="liveBox"><img id="live" alt="Live view (MJPEG)"><span>Live view off</span></div>
+    <div class="row" style="margin-top: 10px">
+      <button class="primary" id="photoBtn" onclick="takePhoto()">Take photo</button>
+      <button class="rec" id="recBtn" onclick="toggleRecord()">Start recording</button>
+      <button onclick="act('/api/clock', 'Clock synced')">Sync clock</button>
+      <button onclick="toggleLive()" id="liveBtn">Start live view</button>
+    </div>
+    <p id="msg"></p>
+    <p style="margin: 0; color: var(--muted)">Full-quality stream: open <code id="rtsp"></code> in VLC.</p>
+  </section>
+
+  <section>
+    <div class="row" style="justify-content: space-between; margin-bottom: 10px">
+      <div class="tabs" role="tablist">
+        <button role="tab" id="tab-video" onclick="showTab('video')">Videos</button>
+        <button role="tab" id="tab-photo" onclick="showTab('photo')">Photos</button>
+      </div>
+      <button onclick="loadFiles()">Refresh</button>
+    </div>
+    <div id="pane-video"></div>
+    <div id="pane-photo"></div>
+  </section>
+
+  <dialog id="player" aria-labelledby="playerTitle">
+    <div class="head"><b id="playerTitle"></b><button onclick="$('player').close()" aria-label="Close player">✕</button></div>
+    <div class="stage"><video id="video" controls autoplay playsinline></video><p id="playerMsg" role="status"></p></div>
+    <div class="foot" id="playerLinks"></div>
+  </dialog>
+
+  <section>
+    <div class="row" style="justify-content: space-between">
+      <h2>Settings</h2>
+      <span id="settingsHint" style="color: var(--muted); font-size: 13px"></span>
+    </div>
+    <div id="settings" class="settings"></div>
+    <div id="settingsInfo" class="info"></div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+const say = (t) => ($('msg').textContent = t);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+let recording = false;
+let busy = false; // a photo / record-stop is waiting for its file, so background refreshes stay out of the way
+let infoText = '';
+let infoSig = null;
+const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+
+// /api/info is already polled every 30s. Camera.File.Total counts videos only, and
+// "photos left" is a free-space estimate that moves when any file is written or
+// deleted, so together they're a cheap "the card changed" signal (e.g. the
+// camera's own buttons were used) without listing files on every poll.
+async function refreshInfo({ reload = true } = {}) {
+  try {
+    const i = await api('/api/info');
+    const mins = Math.floor((i.recordRemainingSec ?? 0) / 60);
+    infoText = ` · 🔋 <b>${i.battery ?? '?'}%</b> · <b>${mins} min</b> / <b>${i.photosRemaining ?? '?'}</b> photos left`;
+    const sig = `${i.fileCount}/${i.photosRemaining}`;
+    if (reload && infoSig !== null && sig !== infoSig && !recording && !busy) loadFiles();
+    infoSig = sig;
+  } catch { infoText = ''; }
+}
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { 'Content-Type': 'application/json' }, cache: 'no-store', ...opts });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || res.statusText);
+  return data;
+}
+
+// Returns true if the camera accepted the command.
+async function act(path, done) {
+  try { say('…'); await api(path, { method: 'POST', body: '{}' }); say(done); refreshStatus(); return true; }
+  catch (e) { say('Error: ' + e.message); return false; }
+}
+
+async function refreshStatus() {
+  try {
+    const s = await api('/api/status');
+    // Recording stopped by the camera's own button: pick up the new video.
+    if (recording && !s.recording && !busy) setTimeout(() => fetchList('video').catch(() => {}), 1000);
+    recording = s.recording;
+    $('status').innerHTML = `Mode <b>${s.mode ?? '?'}</b> · <b>${s.record ?? '?'}</b>` + infoText;
+    $('recBtn').textContent = recording ? 'Stop recording' : 'Start recording';
+    // Settings can't be changed mid-recording.
+    document.querySelectorAll('#settings select, #settings input').forEach((el) => (el.disabled = recording));
+    $('settingsHint').textContent = recording ? 'Stop recording to change settings' : '';
+  } catch (e) { $('status').textContent = 'Camera not reachable'; }
+}
+
+async function toggleRecord() {
+  const stopping = recording;
+  if (!stopping) return act('/api/record/start', 'Recording started');
+  busy = true;
+  try {
+    const before = sig(files.video);
+    if (!(await act('/api/record/stop', 'Saving video…'))) return;
+    say(await waitForChange('video', before, 10000) ? 'Recording stopped' : 'Recording stopped (no new video in the list yet, try Refresh)');
+    refreshInfo({ reload: false });
+  } catch (e) { say('Error: ' + e.message); }
+  finally { busy = false; }
+}
+
+// The X3 answers "OK" to the photo command but only actually saves a photo while
+// its preview pipeline is running, i.e. while something is reading the live
+// stream. So if live view is off, open the stream in the background for the
+// shot, then check the photo really arrived.
+async function takePhoto() {
+  const btn = $('photoBtn');
+  btn.disabled = true;
+  busy = true;
+  let preview = null;
+  try {
+    say('Taking photo…');
+    const [list, p] = await Promise.all([fetchList('photo'), $('live').src ? null : openPreview()]);
+    preview = p;
+    if (!(await act('/api/photo', 'Taking photo…'))) return;
+    say(await waitForChange('photo', sig(list), 12000) ? 'Photo taken'
+      : 'The camera accepted the command but no new photo appeared. Try again with live view on.');
+    refreshInfo({ reload: false });
+  } catch (e) { say('Error: ' + e.message); }
+  finally { preview?.abort(); busy = false; btn.disabled = false; }
+}
+
+// Opens /live.mjpeg without showing it. The server only answers once ffmpeg has
+// a frame, so a response means the camera is streaming. Returns an
+// AbortController to close it, or null (no ffmpeg, camera stream unavailable…).
+async function openPreview() {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), 10000);
+  try {
+    const res = await fetch('/live.mjpeg?t=' + Date.now(), { signal: ctl.signal, cache: 'no-store' });
+    clearTimeout(timer);
+    if (!res.ok) { ctl.abort(); return null; }
+    const reader = res.body.getReader();
+    (async () => { try { while (!(await reader.read()).done); } catch {} })(); // drain until aborted
+    await sleep(1500);
+    return ctl;
+  } catch { clearTimeout(timer); return null; }
+}
+
+function toggleLive() {
+  const img = $('live');
+  if (img.src) { img.removeAttribute('src'); $('liveBtn').textContent = 'Start live view'; }
+  else { img.src = '/live.mjpeg?t=' + Date.now(); $('liveBtn').textContent = 'Stop live view'; }
+}
+
+const mb = (n) => (n / 1e6).toFixed(1) + ' MB';
+const dur = (s) => (s < 60 ? s.toFixed(1) + ' s' : `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`);
+const q = (f) => '?path=' + encodeURIComponent(f.path);
+const mediaUrl = (f, download) => '/media' + q(f) + (download ? '&download' : '');
+const thumbUrl = (f) => '/thumb' + q(f);
+const playUrl = (f) => '/play' + q(f);
+const actions = (f) => `<a href="${mediaUrl(f, true)}">Download</a> · <a href="#" data-del="${esc(f.path)}">Delete</a>`;
+const newestFirst = (a, b) => (b.time || '').localeCompare(a.time || '');
+const files = { video: [], photo: [] };
+let tab = 'video';
+try { tab = localStorage.getItem('x3-tab') || 'video'; } catch {}
+
+function showTab(t) {
+  tab = t;
+  try { localStorage.setItem('x3-tab', t); } catch {}
+  for (const k of ['video', 'photo']) {
+    $('tab-' + k).setAttribute('aria-selected', String(k === t));
+    $('pane-' + k).hidden = k !== t;
+  }
+}
+
+// Fingerprint of a list, to tell whether anything changed.
+const sig = (list) => list.map((f) => `${f.path}:${f.size}`).join('|');
+
+// Only the most recently started request for a type gets rendered, so a slow
+// older load can't overwrite a newer list.
+const listSeq = { video: 0, photo: 0 };
+async function fetchList(type) {
+  const n = ++listSeq[type];
+  try {
+    const list = (await api(`/api/files?type=${type}&all`)).sort(newestFirst);
+    if (n === listSeq[type]) { files[type] = list; render(type); }
+    return list;
+  } catch (e) {
+    if (n === listSeq[type]) $('pane-' + type).textContent = e.message;
+    throw e;
+  }
+}
+
+// Re-list until the card's contents differ from `before` (or give up).
+async function waitForChange(type, before, timeoutMs) {
+  for (const start = Date.now(); Date.now() - start < timeoutMs;) {
+    await sleep(1000);
+    if (sig(await fetchList(type)) !== before) return true;
+  }
+  return false;
+}
+
+async function loadFiles() {
+  // Sequential: the camera serves one request at a time.
+  for (const type of ['video', 'photo']) await fetchList(type).catch(() => {});
+}
+
+function render(type) {
+  const list = files[type];
+  $('tab-' + type).textContent = `${type === 'video' ? 'Videos' : 'Photos'} (${list.length})`;
+  const card = type === 'video'
+    ? (f) => `<div class="card">
+        <button class="thumb" data-play="${esc(f.path)}" aria-label="Play ${esc(f.name)}" title="Play ${esc(f.name)}">
+          <img loading="lazy" alt="" data-src="${thumbUrl(f)}"><span class="play">▶</span></button>
+        <div class="meta"><b>${esc(f.time)}</b><br>${[f.resolution, f.fps && f.fps + ' fps', f.duration && dur(f.duration), mb(f.size)]
+          .filter(Boolean).map(esc).join(' · ')}<br><a href="${playUrl(f)}" data-play="${esc(f.path)}">Play</a> · ${actions(f)}</div></div>`
+    : (f) => `<div class="card">
+        <a class="thumb" href="${mediaUrl(f)}" target="_blank" rel="noopener" title="${esc(f.name)}">
+          <img loading="lazy" alt="${esc(f.name)}" data-src="${thumbUrl(f)}" data-fallback="${mediaUrl(f)}"></a>
+        <div class="meta"><b>${esc(f.time)}</b><br>${esc(f.resolution)} · ${mb(f.size)}<br>${actions(f)}</div></div>`;
+  $('pane-' + type).innerHTML = list.length ? `<div class="cards">${list.map(card).join('')}</div>`
+    : `<p class="empty">No ${type === 'video' ? 'videos' : 'photos'} on the card.</p>`;
+  $('pane-' + type).querySelectorAll('img[data-src]').forEach(queueThumb);
+}
+
+// Thumbnails can take a while the first time (the server extracts them with
+// ffmpeg), so load at most two at a time, and only once they're near the
+// screen. Otherwise slow thumbnails would use up the browser's connections and
+// stall the status/file requests.
+const thumbQueue = [];
+let thumbsLoading = 0;
+const thumbObserver = 'IntersectionObserver' in window ? new IntersectionObserver((entries) => {
+  for (const e of entries) if (e.isIntersecting) { thumbObserver.unobserve(e.target); thumbQueue.push(e.target); }
+  pumpThumbs();
+}, { rootMargin: '300px' }) : null;
+
+function queueThumb(img) {
+  if (thumbObserver) thumbObserver.observe(img);
+  else { thumbQueue.push(img); pumpThumbs(); }
+}
+
+function pumpThumbs() {
+  while (thumbsLoading < 2 && thumbQueue.length) {
+    const img = thumbQueue.shift();
+    if (!img.isConnected) continue;
+    thumbsLoading++;
+    let settled = false;
+    const done = () => { if (!settled) { settled = true; thumbsLoading--; pumpThumbs(); } };
+    img.addEventListener('load', done, { once: true });
+    img.addEventListener('error', () => {
+      done();
+      // Photos fall back to the full-size original; otherwise leave the placeholder.
+      if (img.dataset.fallback) { img.src = img.dataset.fallback; delete img.dataset.fallback; }
+      else img.hidden = true;
+    });
+    img.src = img.dataset.src;
+  }
+}
+
+async function del(p) {
+  if (!confirm('Delete ' + p + ' from the camera?')) return;
+  try {
+    await api('/api/files?path=' + encodeURIComponent(p), { method: 'DELETE' });
+    say('Deleted');
+    await fetchList(p.startsWith('/SD/Photo/') ? 'photo' : 'video').catch(() => {});
+    refreshInfo({ reload: false });
+  } catch (e) { say('Error: ' + e.message); }
+}
+
+document.addEventListener('click', (e) => {
+  const d = e.target.closest('[data-del]');
+  if (d) { e.preventDefault(); return del(d.dataset.del); }
+  const p = e.target.closest('[data-play]');
+  if (p && !e.metaKey && !e.ctrlKey && !e.shiftKey) { e.preventDefault(); openPlayer(p.dataset.play); }
+});
+
+// --- player: /play serves an MP4 the server converts (and caches) on first request
+let playerTimer = null;
+function setPlayerMsg(text, err) {
+  clearInterval(playerTimer);
+  $('playerMsg').textContent = text;
+  $('playerMsg').className = err ? 'err' : '';
+}
+
+function openPlayer(p) {
+  const f = files.video.find((x) => x.path === p) || { path: p, name: p.split('/').pop() };
+  const v = $('video');
+  $('playerTitle').textContent = f.name + (f.time ? ' · ' + f.time : '');
+  $('playerLinks').innerHTML = `<a href="${mediaUrl(f, true)}">Download original (.MOV${f.size ? ', ' + mb(f.size) : ''})</a>`;
+  const started = Date.now();
+  const preparing = () => (($('playerMsg').textContent =
+    `Preparing video… (first play converts it, may take up to a minute) ${Math.round((Date.now() - started) / 1000)} s`));
+  setPlayerMsg('');
+  preparing();
+  playerTimer = setInterval(preparing, 1000);
+  v.src = playUrl(f);
+  $('player').showModal();
+  v.play().catch(() => {}); // errors are reported by the 'error' event
+}
+
+{
+  const v = $('video');
+  const ready = () => { if (v.getAttribute('src')) setPlayerMsg(''); };
+  v.addEventListener('loadeddata', ready);
+  v.addEventListener('canplay', ready);
+  v.addEventListener('error', () => {
+    if (!$('player').open || !v.getAttribute('src')) return;
+    setPlayerMsg(`Couldn't play this video${v.error?.message ? ` (${v.error.message})` : ''}. The conversion may have failed; you can still download the original.`, true);
+  });
+  // Closing (✕, Esc or clicking outside) stops playback and the download.
+  $('player').addEventListener('close', () => {
+    if ($('player').open) return; // the event is async: already reopened
+    setPlayerMsg('');
+    v.pause();
+    v.removeAttribute('src');
+    v.load();
+  });
+  $('player').addEventListener('click', (e) => { if (e.target === $('player')) $('player').close(); });
+}
+
+async function loadSettings() {
+  try {
+    const list = await api('/api/settings/meta');
+    const editable = list.filter((x) => !x.readOnly);
+    const info = list.filter((x) => x.readOnly && x.value);
+    $('settings').innerHTML = editable.map((x) => {
+      const id = 'set-' + x.name;
+      const control = x.options
+        ? `<select id="${id}" data-name="${esc(x.name)}">${x.options.map((o) => {
+            const [v, label] = Array.isArray(o) ? o : [o, o];
+            return `<option value="${esc(v)}"${v === x.value ? ' selected' : ''}>${esc(label)}</option>`;
+          }).join('')}${x.options.some((o) => (Array.isArray(o) ? o[0] : o) === x.value) ? ''
+            : `<option value="${esc(x.value)}" selected>${esc(x.value)}</option>`}</select>`
+        : `<input id="${id}" data-name="${esc(x.name)}" value="${esc(x.value)}" title="Press Enter to save">`;
+      return `<div class="setting"><label for="${id}">${esc(x.label)}</label>${control}<p class="note" id="note-${esc(x.name)}"></p></div>`;
+    }).join('');
+    $('settingsInfo').innerHTML = info.map((x) => `${esc(x.label)}: <b>${esc(x.value)}</b>`).join(' · ');
+    document.querySelectorAll('#settings select').forEach((el) => el.addEventListener('change', () => saveSetting(el)));
+    document.querySelectorAll('#settings input').forEach((el) => el.addEventListener('keydown', (e) => e.key === 'Enter' && saveSetting(el)));
+    document.querySelectorAll('#settings select, #settings input').forEach((el) => {
+      el.dataset.saved = el.value;
+      el.disabled = recording;
+    });
+  } catch (e) { $('settings').textContent = e.message; }
+}
+
+async function saveSetting(el) {
+  const name = el.dataset.name;
+  const note = document.getElementById('note-' + name);
+  note.className = 'note';
+  note.textContent = 'Saving…';
+  el.disabled = true;
+  try {
+    const r = await api('/api/settings/' + encodeURIComponent(name), { method: 'PUT', body: JSON.stringify({ value: el.value }) });
+    el.value = el.dataset.saved = r.value;
+    note.className = 'note ok';
+    note.textContent = 'Saved';
+    setTimeout(() => { if (note.textContent === 'Saved') note.textContent = ''; }, 2000);
+  } catch (e) {
+    el.value = el.dataset.saved;
+    note.className = 'note err';
+    note.textContent = e.message;
+  } finally {
+    el.disabled = recording;
+  }
+}
+
+api('/api/live').then((l) => ($('rtsp').textContent = l.rtsp)).catch(() => {});
+showTab(tab);
+refreshInfo().then(refreshStatus).then(loadFiles).then(loadSettings);
+setInterval(refreshStatus, 5000);
+setInterval(refreshInfo, 30000);
+</script>
+</body>
+</html>
