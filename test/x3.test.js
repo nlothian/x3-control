@@ -121,3 +121,37 @@ test('mock mimics firmware: & truncates, keys capped at 35 chars', async () => {
   await cam.set('Net.WIFI_STA.AP.8.CryptoKey', 'x'.repeat(64));
   assert.equal((await cam.get('Net.WIFI_STA.AP.8.CryptoKey'))['Net.WIFI_STA.AP.8.CryptoKey'].length, 35);
 });
+
+test('client mode switches only after the profile reads back exactly', async () => {
+  await cam.useClientMode({ ssid: 'Home 2G', password: 'abc123def4567' });
+  assert.ok(mock.log.at(-1).includes('property=Net&value=reset'));
+  let w = await cam.wifi();
+  assert.equal(w.station.enabled, true);
+  assert.equal(w.hotspot.enabled, false);
+  assert.equal(w.raw['Net.WIFI_STA.AP.1.CryptoKey'], 'abc123def4567');
+
+  await cam.useHotspot();
+  w = await cam.wifi();
+  assert.equal(w.hotspot.enabled, true);
+  assert.equal(w.station.enabled, false);
+  assert.equal(w.station.profiles[0].ssid, 'Home 2G'); // kept for switching back
+});
+
+test('client mode refuses passwords the firmware would mangle', async () => {
+  await assert.rejects(cam.useClientMode({ ssid: 'x', password: 'a&b' }), /&/);
+  await assert.rejects(cam.useClientMode({ ssid: 'x', password: 'x'.repeat(36) }), /35/);
+});
+
+test('client mode does not switch if the camera stored something else', async () => {
+  const flaky = new X3Camera({ host: cam.host });
+  const realGet = flaky.get.bind(flaky);
+  flaky.get = async (p) => {
+    const v = await realGet(p);
+    if (p.startsWith('Net.WIFI_STA.AP.1.')) v['Net.WIFI_STA.AP.1.CryptoKey'] = 'truncated';
+    return v;
+  };
+  const before = mock.log.length;
+  await assert.rejects(flaky.useClientMode({ ssid: 'x', password: 'right-password' }), /not switching/);
+  assert.ok(!mock.log.slice(before).some((l) => l.includes('Net.Dev.1.Start') || l.includes('value=reset')));
+  assert.equal((await cam.wifi()).hotspot.enabled, true);
+});

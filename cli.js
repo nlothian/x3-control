@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Command-line control for the Kaiser Baas X3. Run `node cli.js help`.
 
-import { X3Camera, CameraError } from './lib/x3.js';
+import { X3Camera, CameraError, DEFAULT_HOST } from './lib/x3.js';
 import { SETTINGS, normaliseValue } from './lib/settings-meta.js';
 
 const HELP = `
@@ -35,9 +35,10 @@ Wi-Fi
   wifi hotspot [--ssid S] [--password P]   Change the camera's own hotspot
   wifi test-write             Safe check that Wi-Fi settings are writable
   wifi key-test               Safe check of password length / characters (uses slot 8)
-  wifi join --ssid S --password [P] [--enc AES|TKIP] --disable-hotspot --yes
-                              EXPERIMENTAL: make the camera join your network.
-                              The X3 needs --disable-hotspot; read the README first.
+  wifi client-mode --ssid S --password [P] [--enc AES|TKIP] --yes
+                              EXPERIMENTAL: join your 2.4 GHz network and turn the
+                              hotspot off (read the README first). Alias: join
+  wifi hotspot-mode --yes     Turn the camera's own hotspot back on (leaves your network)
   wifi apply                  Restart the camera's Wi-Fi to apply changes
 `;
 
@@ -242,21 +243,38 @@ async function wifiCommand(cam, sub, flags) {
       console.log('Slot 8 cleared.');
       break;
     }
-    case 'join': {
-      if (!flags.ssid) throw new CameraError('Give --ssid (and --password)');
-      await cam.setStationProfile({ slot: 1, ssid: flags.ssid, password: flags.password || '', encType: flags.enc || 'AES' });
-      console.log(`Saved "${flags.ssid}" to client-mode slot 1.`);
+    case 'hotspot-mode': {
+      const { hotspot, station } = await cam.wifi();
+      if (hotspot.enabled && !station.enabled) { console.log(`Already in hotspot mode ("${hotspot.ssid}").`); break; }
       if (!flags.yes) {
-        console.log('Not enabling client mode without --yes. Re-run with --yes to switch the camera over.');
+        console.log(`This turns the camera's hotspot "${hotspot.ssid}" back on and turns client mode off.`);
+        console.log(`The camera will leave the network it is on now (${cam.host}). Re-run with --yes to switch.`);
         break;
       }
-      await cam.setStationEnabled(true);
-      if (flags['disable-hotspot']) await cam.set('Net.Dev.1.Start', '0');
-      await cam.resetNetwork();
-      console.log('Client mode enabled and Wi-Fi restarted.');
+      await cam.useHotspot();
+      console.log('Switched to hotspot mode. The camera\'s Wi-Fi is restarting.');
+      console.log(`In ~20 seconds, join the "${hotspot.ssid}" Wi-Fi network; the camera will be at ${DEFAULT_HOST}.`);
+      console.log('To go back:  node cli.js wifi client-mode --ssid "YourNetwork" --password --yes');
+      break;
+    }
+    case 'join':
+    case 'client-mode': {
+      if (!flags.ssid) throw new CameraError('Give --ssid, and --password (alone to be prompted)');
+      const password = typeof flags.password === 'string' ? flags.password : '';
+      X3Camera.checkStationPassword(password);
+      if (!flags.yes) {
+        console.log(`This makes the camera join "${flags.ssid}" and turns its own hotspot OFF.`);
+        console.log('If it then can\'t join, you can\'t reach it until that network is available');
+        console.log('(see "If the camera doesn\'t show up" in the README). The network must be 2.4 GHz.');
+        console.log('Re-run with --yes to switch. Nothing has been changed.');
+        break;
+      }
+      await cam.useClientMode({ ssid: flags.ssid, password, encType: flags.enc || 'AES' });
+      console.log(`Saved and verified "${flags.ssid}". Switched to client mode; the camera's Wi-Fi is restarting.`);
       console.log('Give it ~2 minutes (power-cycle if needed), then find it in your router\'s client list.');
-      console.log('Look for a MAC starting 00:e0:4c (the Wi-Fi module) - not the 00:0E:53 one the config reports.');
+      console.log('Look for a MAC starting 00:e0:4c (the Wi-Fi module), not the 00:0E:53 one the config reports.');
       console.log('Then:  node cli.js --host THE_IP status');
+      console.log('To go back:  node cli.js --host THE_IP wifi hotspot-mode --yes');
       break;
     }
     case 'apply':

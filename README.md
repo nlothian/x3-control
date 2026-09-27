@@ -41,6 +41,8 @@ node cli.js setting VideoRes 1080P60
 node cli.js clock                  # set the camera clock to this computer's time
 node cli.js live                   # print the RTSP live-view URL (open in VLC)
 node cli.js wifi                   # hotspot / client-mode configuration
+node cli.js wifi hotspot-mode --yes            # switch back to the camera's own hotspot
+node cli.js wifi client-mode --ssid "MyHomeWiFi" --password --yes   # join your network
 node cli.js help                   # everything else, including raw get/set
 ```
 
@@ -91,18 +93,23 @@ While connected to the camera's hotspot:
 ```bash
 node cli.js wifi                   # show the current configuration
 node cli.js wifi test-write        # harmless: checks Wi-Fi settings can be written
-node cli.js wifi join --ssid "MyHomeWiFi" --password --disable-hotspot --yes
+node cli.js wifi client-mode --ssid "MyHomeWiFi" --password --yes
 ```
 
 `--password` with no value prompts for it, so it stays out of your shell
-history. `wifi --password` checks the camera stored it exactly. The camera's
-Wi-Fi restarts. Give it about two minutes (power-cycle it if needed), then
+history. Without `--yes` the command only explains what it will do. It refuses
+passwords the firmware can't store, and it only switches after reading the
+network name and password back from the camera and confirming they match. The
+camera's Wi-Fi then restarts. Give it about two minutes (power-cycle it if needed), then
 find it in your router's list of connected devices.
 
 - **Look for a MAC address starting `00:e0:4c`** (the Realtek Wi-Fi module).
   The `00:0E:53:…` address and the IP that `Net.*` reports are stored defaults,
   not what the camera actually uses.
 - Give it a DHCP reservation in your router so its address doesn't change.
+- To switch back to the camera's own hotspot, run
+  `node cli.js --host <ip> wifi hotspot-mode --yes`, then join `KB-X3` again.
+  Your network stays saved, so `client-mode` switches back.
 - The network must be on **2.4 GHz** with **WPA2 (AES)** or WPA (TKIP). These
   chips can't use 5 GHz.
 - Passwords can be at most **35 characters** and **can't contain `&`**. The
@@ -122,8 +129,7 @@ in is to give it that network:
   A phone hotspot renamed to match works too: on an iPhone, set the phone's
   name and hotspot password, and turn on *Maximise Compatibility* for 2.4 GHz.
 - Once you can reach it, turn the hotspot back on with
-  `node cli.js --host <ip> set Net.Dev.1.Start 1`, then `set Net.Dev.2.Start 0`,
-  then `wifi apply`.
+  `node cli.js --host <ip> wifi hotspot-mode --yes`.
 - To check whether it's trying at all on a Mac, open Wireless Diagnostics
   (Option-click the Wi-Fi icon), choose Window → Sniffer on your 2.4 GHz
   channel, then look for probe requests from a `00:e0:4c:…` address.
