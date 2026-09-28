@@ -72,8 +72,6 @@ API:
 | GET | `/api/settings` | current menu settings |
 | GET | `/api/settings/meta` | each setting with label, current value and allowed `options` (or `free` / `readOnly`) |
 | PUT | `/api/settings/:name` | `{"value": "1080P60"}`: waits until it sticks; 400 if the camera rejects it |
-| GET | `/api/get?property=Net.*` | raw read |
-| POST | `/api/set` | `{"property": "...", "value": "..."}`: raw write |
 | POST | `/api/photo` | |
 | POST | `/api/record/start` · `/stop` · `/toggle` | |
 | POST | `/api/clock` | |

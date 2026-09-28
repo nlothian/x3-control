@@ -41,7 +41,7 @@ Wi-Fi
   wifi hotspot [--ssid S] [--password P]   Change the camera's own hotspot
   wifi test-write             Safe check that Wi-Fi settings are writable
   wifi key-test               Safe check of password length / characters (uses slot 8)
-  wifi client-mode --ssid S --password [P] [--enc AES|TKIP] --yes
+  wifi client-mode --ssid S --password [P]|--open [--enc AES|TKIP] --yes
                               EXPERIMENTAL: join your 2.4 GHz network and turn the
                               hotspot off (read the README first). Alias: join
   wifi hotspot-mode --yes     Turn the camera's own hotspot back on (leaves your network)
@@ -282,7 +282,11 @@ async function wifiCommand(cam, sub, flags) {
     case 'join':
     case 'client-mode': {
       if (!flags.ssid) throw new CameraError('Give --ssid, and --password (alone to be prompted)');
-      const password = typeof flags.password === 'string' ? flags.password : '';
+      // A forgotten password would strand the camera, so an open network must be explicit.
+      if (typeof flags.password !== 'string' && !flags.open) {
+        throw new CameraError('Give --password (alone to be prompted), or --open for a network with no password');
+      }
+      const password = flags.open ? '' : flags.password;
       X3Camera.checkStationPassword(password);
       if (!flags.yes) {
         console.log(`This makes the camera join "${flags.ssid}" and turns its own hotspot OFF.`);

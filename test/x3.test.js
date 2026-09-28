@@ -190,4 +190,15 @@ test('camera address can change at runtime', () => {
   assert.equal(c.host, '192.168.1.50:8080');
   assert.equal(c.rtspUrl, 'rtsp://192.168.1.50/liveRTSP/av4');
   assert.throws(() => c.setHost(' '), (e) => e.code === 'INVALID');
+  for (const bad of ['http://192.168.1.50', 'fe80::1', '192.168.1.50:0', '192.168.1.50:99999', undefined]) {
+    assert.throws(() => c.setHost(bad), (e) => e.code === 'INVALID', String(bad));
+  }
+  assert.equal(c.host, '192.168.1.50:8080');
+});
+
+test('setSetting reports a setting the camera does not read back', async () => {
+  const c = new X3Camera({ host: cam.host });
+  c.set = async () => true;
+  c.get = async () => ({});
+  await assert.rejects(c.setSetting('Videores', '1080P30', { pollMs: 1 }), /doesn't report Camera\.Menu\.Videores/);
 });

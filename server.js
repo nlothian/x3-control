@@ -53,6 +53,16 @@ const readJson = (req) => new Promise((resolve, reject) => {
   req.on('end', () => { try { resolve(data ? JSON.parse(data) : {}); } catch (e) { reject(Object.assign(e, { status: 400 })); } });
 });
 
+// Other websites can send POSTs here from the user's browser. Requiring a JSON
+// content type forces a CORS preflight (which this server never approves), and
+// a browser-sent Origin must match the host it was sent to.
+function sameOrigin(req) {
+  if (!/^application\/json\b/i.test(req.headers['content-type'] ?? '')) return false;
+  const origin = req.headers.origin;
+  if (!origin) return true; // not sent by a browser page (curl, scripts)
+  try { return new URL(origin).host === req.headers.host; } catch { return false; }
+}
+
 // [method, path regex, handler(match, body, url) -> JSON result]
 const routes = [
   ['GET', /^\/api\/status$/, () => cam.status()],
@@ -67,13 +77,12 @@ const routes = [
       name, value: normaliseValue(name, value), ...(SETTINGS[name] ?? { label: name, free: true }),
     }));
   }],
-  ['PUT', /^\/api\/settings\/([\w.-]+)$/, async ([, name], { value }) => {
+  ['PUT', /^\/api\/settings\/([\w.-]+)$/, async ([, raw], { value }) => {
+    const name = raw.replace(/^Camera\.Menu\./, '');
     if (SETTINGS[name]?.readOnly) throw Object.assign(new Error(`${name} is read-only`), { status: 400 });
     return { name, value: normaliseValue(name, await cam.setSetting(name, value)) };
   }],
   ['GET', /^\/api\/preview$/, () => cam.preview()],
-  ['GET', /^\/api\/get$/, (m, b, url) => cam.get(url.searchParams.get('property'))],
-  ['POST', /^\/api\/set$/, async (m, { property, value }) => ({ ok: await cam.set(property, value) })],
   ['POST', /^\/api\/clock$/, async () => ({ ok: await cam.syncClock() })],
   ['POST', /^\/api\/photo$/, async () => ({ ok: await cam.takePhoto() })],
   ['POST', /^\/api\/record\/start$/, async () => ({ changed: await cam.startRecording() })],
@@ -97,9 +106,14 @@ const routes = [
   }],
   // "auto" goes back to finding the camera automatically.
   ['PUT', /^\/api\/camera-host$/, async (m, { host }) => {
-    autoHost = String(host).trim() === 'auto';
-    if (autoHost) await rediscover({ force: true });
-    else useHost(host);
+    if (typeof host !== 'string') throw Object.assign(new Error('host must be an address or "auto"'), { status: 400 });
+    if (host.trim() === 'auto') {
+      autoHost = true;
+      await rediscover({ force: true });
+    } else {
+      useHost(host); // throws on a bad address, leaving the current one in place
+      autoHost = false;
+    }
     return { cameraHost: cam.host, autoHost };
   }],
   // Full search of the hotspot address and local network; switches to the first camera found.
@@ -199,6 +213,10 @@ const server = http.createServer(async (req, res) => {
     for (const [method, re, handler] of routes) {
       const m = url.pathname.match(re);
       if (m && req.method === method) {
+        if (method !== 'GET' && !sameOrigin(req)) {
+          res.writeHead(403, { 'Content-Type': 'application/json' });
+          return res.end(JSON.stringify({ error: 'Cross-site request refused' }));
+        }
         const body = ['POST', 'PUT'].includes(method) ? await readJson(req) : {};
         const result = await handler(m, body, url);
         res.writeHead(200, { 'Content-Type': 'application/json' });
