@@ -50,7 +50,7 @@ const LONG_CACHE = 'private, max-age=31536000, immutable';
 const readJson = (req) => new Promise((resolve, reject) => {
   let data = '';
   req.on('data', (c) => (data += c));
-  req.on('end', () => { try { resolve(data ? JSON.parse(data) : {}); } catch (e) { reject(e); } });
+  req.on('end', () => { try { resolve(data ? JSON.parse(data) : {}); } catch (e) { reject(Object.assign(e, { status: 400 })); } });
 });
 
 // [method, path regex, handler(match, body, url) -> JSON result]
@@ -84,7 +84,11 @@ const routes = [
     return url.searchParams.has('all') ? cam.listAllFiles({ type })
       : cam.listFiles({ type, from: Number(url.searchParams.get('from') || 0), count: Number(url.searchParams.get('count') || 16) });
   }],
-  ['DELETE', /^\/api\/files$/, async (m, b, url) => ({ ok: await cam.deleteFile(url.searchParams.get('path')) })],
+  ['DELETE', /^\/api\/files$/, async (m, b, url) => {
+    const p = url.searchParams.get('path');
+    if (!validCameraPath(p)) throw Object.assign(new Error('path must start with /SD/ and not contain ..'), { status: 400 });
+    return { ok: await cam.deleteFile(p) };
+  }],
   // Wi-Fi: passwords are write-only; responses only say whether one is set.
   ['GET', /^\/api\/wifi$/, async () => {
     const { raw, ...w } = await cam.wifi();
